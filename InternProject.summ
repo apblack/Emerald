@@ -1,0 +1,13 @@
+The goal of this work is to construct and demonstrate a multi-user calendar
+system built in the Emerald distributed programming language, including
+provision for scheduling multi-person meetings as atomic transactions.  Some
+refinements to the Emerald system necessary to make the implementation
+realistic may also be undertaken; in particular, inplementation of the 
+checkpointing of objects.
+.lp
+By the end of the internship a functioning Emerald system hosting the
+calendar application will be installed at Digital's Littleton facility.  The
+calendar should be suitable for demonstration to and use by the Distributed
+Systems Advanced Development Group.  Additionally, the student will write a
+short paper describing his experiences with Emerald, and evaluating its
+strengths and weaknesses for this task. 

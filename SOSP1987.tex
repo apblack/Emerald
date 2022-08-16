@@ -1,0 +1,333 @@
+\documentstyle[normscite,mypage]{article}
+\begin{document}
+\bibliographystyle{myalpha}
+\newcommand{\assign}{\ifmmode\leftarrow\else$\leftarrow$\fi}
+
+\begin{center}
+\LARGE
+Fine-Grained Mobility in the Emerald System \\
+\large
+\vspace{3ex}
+Eric Jul, Henry Levy, Norman Hutchinson, and Andrew Black \\
+\vspace{3ex}
+Department of Computer Science \\
+University of Washington \\
+Seattle, WA 98195
+\end{center}
+\normalsize
+
+\begin{abstract}
+
+Emerald is an object-based language and system designed for the construction
+of distributed programs.  Emerald allows programmers to take advantage of 
+distribution, whilst preserving the advantages of location independence.
+In particular, Emerald objects can move
+freely from one node to another without their clients needing to be aware
+of the move.
+
+We say that Emerald
+has {\em fine-grained} mobility because Emerald objects can
+be small data objects as well as process objects.  This paper 
+is concerned with the efficient implementation of object mobility, with the
+impact of mobility on language design, 
+and with
+techniques for implementing mobility that do not adversely impact the
+performance of local operations.  Measurements of the performance of the
+current Emerald implementation are included.
+\end{abstract}
+
+\baselineskip 4.5ex
+
+\section{Introduction}
+
+Process migration has been implemented or described as a goal of
+several distributed systems \cite{accent,butterfield84,powell83,theimer85}.
+In these systems, entire address spaces can be moved from node to node.
+For example, 
+a process manager might 
+initiate a move to more evenly share processor load, or users might
+initiate remote execution explicitly.  In either case, the
+running process is typically
+ignorant of its location and unaffected by the move.  
+
+During the last three years, we have designed
+and implemented Emerald \cite{em1,em2},  a distributed object-based
+language and system.  One of Emerald's design goals was to provide a tool
+that would let us
+experiment with the use of mobility in distributed
+programming.   Mobility in 
+Emerald differs from existing process migration schemes
+in two important respects:
+\begin{itemize}
+\item Because Emerald is object-based, the unit of distribution and
+mobility is the object.  While some Emerald objects contain processes,
+others contain only data: arrays, records and even single integers are all
+objects. Thus,
+the unit of mobility has a much
+smaller grain size than in process migration systems.  Object
+mobility in Emerald subsumes both process migration and data transfer.  
+
+\item Mobility plays a critical ro{\circumflex}le in the 
+design of the Emerald language.  Not only are there language primitives to
+control mobility and location, but certain design choices in conventional
+parts of the language (e.g., parameter passing modes) are feasible only
+because Emerald objects can move, and move at low cost.
+
+\end{itemize}
+
+The advantages of process migration have been noted in previous work {\cite
+somethingorother}.
+\begin{enumerate}
+
+\item Load sharing -- By moving objects around the system, one can take
+advantage of unused cycles.
+
+\item Communications performance -- Active objects that interact intensively
+can be moved to the same node to reduce the communications
+cost for the duration of their interaction.
+
+\item Availability -- Objects or object replicas can be moved to different
+nodes to provide better failure coverage.
+
+\item Reconfiguration -- Objects can be moved following either a failure
+or a recovery, or prior to scheduled down-time.
+
+\item Utilizing special capabilities -- An object can move to take
+advantage of unique hardware or software capabilities on a particular
+node.
+\end{enumerate}
+In addition, fine-grained mobility provides three additional benefits:
+
+\begin{enumerate}
+\setitemcountto5
+\item Data Movement -- Mobility provides a simple way for the programmer
+to move data from node to node without having to explicitly package
+it.  No separate message passing or file transfer mechanism is required.
+
+\item Invocation Performance -- Mobility has the potential to improve the
+performance of remote invocation while retaining call-by-reference
+(we discuss this is some detail later).
+
+\item Garbage Collection -- Mobility can help to simplify distributed
+garbage collection by moving objects to sites where references 
+exist \cite{vestal}.
+\end{enumerate}
+
+To our knowledge, Apiary \cite{Hewitt80} is the only other system
+intended to support mobility in a style similar to Emerald.
+
+In addition to mobility and distribution, Emerald is intended to
+provide efficient execution.  We wanted to demonstrate that
+we could achieve performance competitive with standard procedural
+languages in the local case and standard remote procedure call
+systems in the remote case.  These goals are not trivial
+in a location-independent object-oriented
+environment.  To meet them, we have
+relied heavily on an appropriate choice of language semantics, a tightly-coupled compiler 
+and run-time kernel, and careful attention to implementation.
+
+In this paper we concentrate primarily on language and run-time
+mechanisms that support fine-grained
+mobility while retaining efficient intra-node operation.  First, we 
+present an overview of the Emerald language and system, and its
+mobility and location primitives.  In doing so, we try to explain why our
+attempts to build an efficient object oriented system led us into the realm
+of programming language design. Then  
+we discuss the implementation of
+fine-grained mobility in Emerald and the new problems to which this gives
+rise.  Finally, we present
+measurements of the implementation and draw conclusions from the
+measurements and our design experience.  
+
+\section{Overview of Emerald}
+
+As previously stated, an important goal of Emerald was explicit support
+for mobility.  From a conceputal viewpoint, a more important goal
+was the existence of a single kind of object.  Object-based systems
+typically lie at the ends of the spectrum delineated by 
+object-based languages (e.g., Smalltalk and CLU), 
+which provide small, local, data objects, and
+object-based operating systems (e.g., Hydra and Clouds), 
+which provide large, protected, active objects.  Distributed systems such as
+Argus and Eden that support both object types have separate object definition
+mechanisms for each.  Choosing the right mechanism 
+requires that the programmer know ahead of
+time all uses to which an object will be put; the alternative is to accept
+the inefficiency and inconvenience of using the ``wrong'' mechanism, 
+or to reprogram the object
+later as needs change.  
+
+The motivation for two distinct definition mechanisms is the need for two
+distinct implementations.  On distributed
+object-based systems such as Clouds and Eden, 
+the local case of the general invocation mechanism can take milliseconds or
+tens of milliseconds.  A more restricted and more efficient implementation
+is appropriate for objects that are known to be always local; for example,
+shared store can be used in preference to messages.
+
+While we beleive in the importance of multiple implementations, we
+do not believe that they need to be visible to the programmer.  
+In Emerald, a single object definition mechanism with a single semantics 
+is used for programming all objects.  This includes small, local,
+data-only objects and active, mobile, 
+distributed objects.  
+However, the Emerald compiler is capable of determining the needs
+of each object and generating the appropriate implementation.
+Indeed, the compiler can produce
+different implementations from the same piece of code, depending
+on the context in which it was compiled.
+Simple local
+objects receive a very light-weight interface, while mobile, distributed
+objects receive a heavier interface.   For example,
+a tree object used only locally will receive a different
+implementation from a tree shared globally.  The various compiler-generated
+implementations are described in more detail in section ~\ref{addr}.
+
+The motivation for designing a new langauge, rather than just trying to
+apply these ideas to the implementation of an existing language, is that
+very often the semantics of a language will preclude efficient
+implementation in either the local or remote case.  In designing Emerald,
+we constantly kept both inplementations in mind.  Moreover, Emerald has a
+unique type system designed to let the programmer state either nothing or a
+great deal about the use of a variable; in general, the more information
+given to the compiler the better will be the code that it generates.
+
+We believe that
+Emerald demonstrates the viability of this
+approach and meets our goal of
+local performance commensurate with procedural langauges.  
+Table ~\ref{localtable} shows the performance of 
+several local Emerald operations executed on a 
+MicroVAX$^{TM}$ II; reference ~\cite{hutchinson87} contains 
+more details of the compiler and its
+implementation.  The ``resident global invocation'' time is for a global
+object (i.e., one that can move around the network) when invoked
+by another object resident on the same node.
+By way of comparison, we show the local procedure call time for the
+languages C and Concurrent Euclid on the same processor.   Concurrent
+Euclid is slower than C because it, like Emerald, must make explicit checks
+for stack overflow on each call.
+
+\begin{table}
+\centering
+\thicklines
+\begin{tabular}{||c|c|c||}
+\hline
+Emerald & Example & Time \\
+Operation && (microseconds) \\ \hline\hline
+primitive integer invocation & $ i \leftarrow i + 23$ & 0.4 \\ \hline
+primitive real invocation & $ x \leftarrow x + 23.0$ & 3.4 \\ \hline
+local invocation & localobject.nop & 16.6 \\ \hline
+resident global invocation & globalobject.nop & 19.4 \\ \hline
+C procedure call & ??? \\ \hline
+CE procedure call & ??? \\ \hline
+\end{tabular}
+\caption{Timings of Local Emerald Invocations}
+\label{localtable}
+\end{table}
+
+\subsection{Emerald Objects}
+\{comment  Hank:  Here I fell asleep.  But please get rid of this list; the
+only part of interest is the *optional* process}
+
+Each Emerald object has four components:
+\begin{enumerate}
+\item A unique network-wide name.
+
+\item A representation, i.e., the data local to the object, which
+consists primitive data and references to other objects.
+
+\item A set of operations that can be invoked on the object.
+
+\item An {\em optional} process.
+\end{enumerate}
+Emerald objects that contain a process are active;  objects without
+a process are passive data-only objects that execute only as the result of
+invocations.  Multiple invocations of an object may be
+active concurrently, and invocations can execute concurrently with the
+process.  Synchronization is provided by monitors \cite{hoare74}.
+
+The Emerald language supports the concept of
+{\em abstract type} \cite{em1}.  The abstract type of
+an object defines its interface, i.e., the number 
+of operations that it exports,
+their names, and the number and types of
+parameters to each operation.   Abstract types permit new object
+implementations to be easily added to an existing system.
+However, Emerald has no class/instance
+hierarchy, in contrast to Smalltalk \cite{smalltalk}. 
+Objects are not members of a class; conceptually,
+each object carries its own code.  This distinction
+is important in a distributed environment where separating an object
+from its code would be costly.
+
+Identically implemented Emerald objects on each node do share code.
+The code is
+stored in a {\em concrete type object}, which implements
+one or more abstract types.  Because concrete type
+objects are immutable, they can be freely copied.  When an
+object is moved to another node, only its data is moved.  If the object
+contains a process, part of that data will include the process' stack, but no
+code is transferred.  Typically,
+we expect that concrete type objects for most mobile objects will already
+exist on target nodes.  When a kernel receives an object, it checks 
+whether the appropriate
+code already exists locally;  if it does not the kernel locates
+the concrete type and requests that a copy be moved.
+
+
+\subsection{Primitives for Mobility}
+
+Object mobility in Emerald is provided by a small set of language
+primitives.   An Emerald object can:
+\begin{itemize}
+\item {\em Locate} an object, i.e., determine on what node it
+resides.
+
+\item {\em Move} itself or another object to another location.
+
+\item {\em Fix} an object at a particular node.
+
+\item {\em Unfix} an object, making it mobile again following a fix.
+
+\item {\em Refix} an object, atomically performing an Unfix, Move,
+and Fix to a new location.
+\end{itemize}
+The move primitive is actually a hint;  the kernel is not obliged
+to perform the move and the object is not obliged to remain at the
+destination site.  Fix and refix have stronger semantics;  if the primitives
+succeed the
+object will stay at the destination until it is explicitly unfixed.
+
+Central to these primitives is the concept of location, which is
+encapsulated in a {\em node} object.  A node object is an abstraction
+of a physical machine.  Location may be specified by naming either
+a node object or any other object.  If the programmer specifies a
+non-node object, the location implied is the node on
+which that object resides \cite{black85}.  This 
+makes it simple to co-locate objects
+without having to discover their locations.
+
+A crucial issue when moving objects containing references
+is deciding
+how much to move \cite{sollins79}.
+An object is part of a graph of references, and one could move a single
+object, several levels of objects, or the entire graph.
+The simplest approach --- moving the specified object alone --- may
+be inappropriate.  Depending on how the object is
+implemented, invocations to the moved object may require remote references 
+that would have been avoided if other related
+objects had been moved as well.
+
+The Emerald programmer may wish to explicitly
+specify which objects move together.  For this purpose, the Emerald
+language allows the programmer to {\em attach} objects to other
+objects.   When a variable is declared, the 
+programmer can specify the variable to be an ``attached variable''.  For
+example, consider an object {\em queue} that contains the following
+statements:
+\begin{tabbing}
+xxxxx\= \kill
+\> {\bf var} {\em aDir} : {\em directory} \\
+\> {\bf attached var}  {\em aTree} : {\em balancingTree}
+
